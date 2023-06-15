@@ -1,3 +1,17 @@
+# Online test
+
+https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=o5ev5-niaaa-aaaak-qcgaa-cai
+
+# Developement
+
+1. dfx start
+2. generate `candid` interface file: `cargo test`.
+3. dfx deploy
+
+or deploy to `icp` mainnet:
+
+dfx deploy --network ic
+
 # permaswap_lp
 
 Welcome to your new permaswap_lp project and to the internet computer development community. By default, creating a new project adds this README and some template files to your project directory. You can edit these template files to customize your project and to include your own code to speed up the development cycle.
