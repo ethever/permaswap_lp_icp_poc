@@ -1,3 +1,14 @@
+type PublicKeyReply = record { public_key_hex : text };
+type Result = variant { Ok : PublicKeyReply; Err : text };
+type Result_1 = variant { Ok : SignatureReply; Err : text };
+type Result_2 = variant { Ok : SignatureVerificationReply; Err : text };
+type SignatureReply = record { state : State; signature_hex : text };
+type SignatureVerificationReply = record { is_signature_valid : bool };
+type State = record { x_token : nat64; y_token : nat64 };
 service : {
-    "greet": (text) -> (text) query;
+  canister_cycles_balance : () -> (nat) query;
+  get_state : () -> (State) query;
+  public_key : () -> (Result);
+  sign_and_change_state : (text) -> (Result_1);
+  verify : (text, text, text) -> (Result_2) query;
 }

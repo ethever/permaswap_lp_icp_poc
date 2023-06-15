@@ -1,11 +1,17 @@
-use ic_cdk::export::{
-    candid::CandidType,
-    serde::{Deserialize, Serialize},
-    Principal,
+use candid::{candid_method, export_service};
+use ic_cdk::{
+    api::management_canister::ecdsa::{
+        EcdsaCurve, EcdsaKeyId, SignWithEcdsaArgument, SignWithEcdsaResponse,
+    },
+    export::{
+        candid::CandidType,
+        serde::{Deserialize, Serialize},
+        Principal,
+    },
 };
 use ic_cdk::{query, update};
-use std::convert::TryFrom;
 use std::str::FromStr;
+use std::{cell::RefCell, convert::TryFrom};
 
 #[derive(CandidType, Serialize, Debug)]
 struct PublicKeyReply {
@@ -15,6 +21,7 @@ struct PublicKeyReply {
 #[derive(CandidType, Serialize, Debug)]
 struct SignatureReply {
     pub signature_hex: String,
+    pub state: State,
 }
 
 #[derive(CandidType, Serialize, Debug)]
@@ -37,36 +44,47 @@ struct ECDSAPublicKeyReply {
     pub chain_code: Vec<u8>,
 }
 
-#[derive(CandidType, Serialize, Debug)]
-struct SignWithECDSA {
-    pub message_hash: Vec<u8>,
-    pub derivation_path: Vec<Vec<u8>>,
-    pub key_id: EcdsaKeyId,
-}
+// #[derive(CandidType, Serialize, Debug)]
+// struct SignWithECDSA {
+//     pub message_hash: Vec<u8>,
+//     pub derivation_path: Vec<Vec<u8>>,
+//     pub key_id: EcdsaKeyId,
+// }
 
 #[derive(CandidType, Deserialize, Debug)]
 struct SignWithECDSAReply {
     pub signature: Vec<u8>,
 }
 
-#[derive(CandidType, Serialize, Debug, Clone)]
-struct EcdsaKeyId {
-    pub curve: EcdsaCurve,
-    pub name: String,
+// #[derive(CandidType, Serialize, Debug, Clone)]
+// struct EcdsaKeyId {
+//     pub curve: EcdsaCurve,
+//     pub name: String,
+// }
+
+// #[derive(CandidType, Serialize, Debug, Clone)]
+// pub enum EcdsaCurve {
+//     #[serde(rename = "secp256k1")]
+//     Secp256k1,
+// }
+
+#[derive(CandidType, Deserialize, Serialize, Default, Debug, Clone)]
+struct State {
+    x_token: u64,
+    y_token: u64,
 }
 
-#[derive(CandidType, Serialize, Debug, Clone)]
-pub enum EcdsaCurve {
-    #[serde(rename = "secp256k1")]
-    Secp256k1,
+thread_local! {
+    static STATE: RefCell<State> = RefCell::new(State::default());
 }
 
+#[candid_method(update)]
 #[update]
 async fn public_key() -> Result<PublicKeyReply, String> {
     let request = ECDSAPublicKey {
         canister_id: None,
         derivation_path: vec![],
-        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+        key_id: EcdsaKeyIds::ProductionKey1.to_key_id(),
     };
 
     let (res,): (ECDSAPublicKeyReply,) =
@@ -79,33 +97,64 @@ async fn public_key() -> Result<PublicKeyReply, String> {
     })
 }
 
+#[candid_method(update)]
 #[update]
-async fn sign(message: String) -> Result<SignatureReply, String> {
-    let request = SignWithECDSA {
-        message_hash: sha256(&message).to_vec(),
-        derivation_path: vec![],
-        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
-    };
-
-    let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment(
-        mgmt_canister_id(),
+async fn sign_and_change_state(message: String) -> Result<SignatureReply, String> {
+    let (response,): (SignWithEcdsaResponse,) = ic_cdk::api::call::call_with_payment(
+        Principal::management_canister(),
         "sign_with_ecdsa",
-        (request,),
+        (SignWithEcdsaArgument {
+            message_hash: sha256(&message).to_vec(),
+            derivation_path: vec![],
+            key_id: EcdsaKeyIds::ProductionKey1.to_key_id(),
+        },),
         25_000_000_000,
     )
     .await
     .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))?;
 
-    Ok(SignatureReply {
-        signature_hex: hex::encode(&response.signature),
-    })
+    // Seems broken, IC are fixing it...
+    // https://forum.dfinity.org/t/how-to-pass-cycles-param-to-ic-cdk-sign-with-ecdsa/20721
+    // let (response,) =
+    //     ic_cdk::api::management_canister::ecdsa::sign_with_ecdsa(SignWithEcdsaArgument {
+    //         message_hash: sha256(&message).to_vec(),
+    //         derivation_path: vec![],
+    //         key_id: EcdsaKeyIds::ProductionKey1.to_key_id(),
+    //     })
+    //     .await
+    //     .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))?;
+
+    // update local state
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.x_token += 1;
+        state.y_token += 3;
+    });
+
+    let state = STATE.with(|state| {
+        let state = state.borrow();
+        SignatureReply {
+            signature_hex: hex::encode(&response.signature),
+            state: (*state).clone(),
+        }
+    });
+
+    Ok(state)
 }
 
+#[candid_method(query)]
+#[query]
+fn get_state() -> State {
+    STATE.with(|state| (*state.borrow()).clone())
+}
+
+#[candid_method(query)]
 #[query]
 fn canister_cycles_balance() -> u128 {
     ic_cdk::api::canister_balance128()
 }
 
+#[candid_method(query)]
 #[query]
 async fn verify(
     signature_hex: String,
@@ -171,4 +220,25 @@ impl EcdsaKeyIds {
 getrandom::register_custom_getrandom!(always_fail);
 pub fn always_fail(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
     Err(getrandom::Error::UNSUPPORTED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::export_candid;
+
+    #[test]
+    fn save_candid() {
+        use std::env;
+        use std::fs::write;
+        use std::path::PathBuf;
+
+        let dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+        write(dir.join("permaswap_lp_backend.did"), export_candid()).expect("Write failed.");
+    }
+}
+
+#[query(name = "__get_candid_interface_tmp_hack")]
+fn export_candid() -> String {
+    export_service!();
+    __export_service()
 }
