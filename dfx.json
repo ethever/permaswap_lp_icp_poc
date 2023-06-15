@@ -5,15 +5,6 @@
       "type": "rust",
       "package": "permaswap_lp_backend",
       "candid": "src/permaswap_lp_backend/permaswap_lp_backend.did"
-    },
-    "permaswap_lp_frontend": {
-      "type": "assets",
-      "source": [
-        "src/permaswap_lp_frontend/assets"
-      ],
-      "dependencies": [
-        "permaswap_lp_backend"
-      ]
     }
   },
   "defaults": {
